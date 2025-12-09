@@ -16,6 +16,7 @@ find_package(catkin REQUIRED
             tf2
             tf2_geometry_msgs
             tf2_ros
+            vlm_social_nav
         )
 
 find_package(Eigen3 REQUIRED)
@@ -44,6 +45,7 @@ catkin_package(
         roscpp
         tf2
         tf2_ros
+        vlm_social_nav
 )
 
 add_library(dwa_local_planner src/dwa_planner.cpp src/dwa_planner_ros.cpp)
