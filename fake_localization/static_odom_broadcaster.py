@@ -18,7 +18,7 @@ from geometry_msgs.msg import Pose, Quaternion, Point
 
 def publishOdom():
     rospy.init_node('fake_odom')
-    base_frame_id = rospy.get_param("~base_frame_id", "base_link")
+    base_frame_id = rospy.get_param("~base_frame_id", "body") # base_link
     odom_frame_id = rospy.get_param("~odom_frame_id", "odom")
     publish_frequency = rospy.get_param("~publish_frequency", 10.0)
     pub = rospy.Publisher('odom', Odometry)
