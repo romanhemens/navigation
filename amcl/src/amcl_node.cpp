@@ -1562,6 +1562,11 @@ AmclNode::handleInitialPoseMessage(const geometry_msgs::PoseWithCovarianceStampe
   try
   {
     // wait a little for the latest tf to become available
+    // NOTE: here `msg.header.stamp` (the message time) is used as the
+    // requested transform time. If `msg.header.stamp` is in the future
+    // relative to what the TF buffer currently holds, this lookup can
+    // throw an Extrapolation (future) error. Causes include clocks not
+    // synchronized or sensor messages stamped ahead of TF updates.
     tx_odom = tf_->lookupTransform(base_frame_id_, msg.header.stamp,
                                    base_frame_id_, ros::Time::now(),
                                    odom_frame_id_, ros::Duration(0.5));
