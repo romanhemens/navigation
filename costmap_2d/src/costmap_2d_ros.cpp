@@ -85,6 +85,13 @@ Costmap2DROS::Costmap2DROS(const std::string& name, tf2_ros::Buffer& tf) :
   private_nh.param("global_frame", global_frame_, std::string("map"));
   private_nh.param("robot_base_frame", robot_base_frame_, std::string("body")); //base_link
 
+  // `last_error` is used to throttle warnings while waiting for TF.
+  // Note: here the initial wait uses `ros::Time()` (zero) vs using
+  // a real-time stamp. `ros::Time()` requests the latest available
+  // transform; using `ros::Time::now()` could request a time that is
+  // slightly in the future relative to the TF buffer and cause an
+  // extrapolation error. The loop below uses `ros::Time()` via
+  // `canTransform(..., ros::Time(), ...)` which avoids future-lookups.
   ros::Time last_error = ros::Time::now();
   std::string tf_error;
   // we need to make sure that the transform between the robot base frame and the global frame is available
@@ -549,21 +556,38 @@ bool Costmap2DROS::getRobotPose(geometry_msgs::PoseStamped& global_pose) const
   geometry_msgs::PoseStamped robot_pose;
   tf2::toMsg(tf2::Transform::getIdentity(), robot_pose.pose);
   robot_pose.header.frame_id = robot_base_frame_;
+  // Empty stamp == ros::Time() indicates an unspecified (or latest)
+  // timestamp for the pose message. We capture `current_time` here to
+  // decide whether to request a transform at a particular time. Using
+  // `current_time` (now) for a lookup can cause 'extrapolation into the
+  // future' if TF data hasn't arrived yet; this is why code often
+  // falls back to latest (ros::Time(0)) when `canTransform` fails.
   robot_pose.header.stamp = ros::Time();
   ros::Time current_time = ros::Time::now();  // save time for checking tf delay later
 
   // get the global pose of the robot
   try
   {
-    // use current time if possible (makes sure it's not in the future)
-    if (tf_.canTransform(global_frame_, robot_base_frame_, current_time))
+    // Try to use current time if possible (makes sure it's not in the future)
+    // If TF buffer is behind, fallback to latest (ros::Time(0))
+    ros::Time lookup_time = current_time;
+    
+    if (!tf_.canTransform(global_frame_, robot_base_frame_, lookup_time))
     {
-      geometry_msgs::TransformStamped transform = tf_.lookupTransform(global_frame_, robot_base_frame_, current_time);
+      // Current time is too far in future, use latest available
+      ROS_DEBUG("Transform not available at current time (%.3f), using latest (ros::Time(0))", current_time.toSec());
+      lookup_time = ros::Time(0);
+    }
+    
+    if (tf_.canTransform(global_frame_, robot_base_frame_, lookup_time))
+    {
+      geometry_msgs::TransformStamped transform = tf_.lookupTransform(global_frame_, robot_base_frame_, lookup_time);
       tf2::doTransform(robot_pose, global_pose, transform);
     }
-    // use the latest otherwise
     else
     {
+      // Last resort: use tf_.transform which always uses latest
+      ROS_DEBUG("Fallback to tf_.transform (latest available)");
       tf_.transform(robot_pose, global_pose, global_frame_);
     }
   }
@@ -580,7 +604,16 @@ bool Costmap2DROS::getRobotPose(geometry_msgs::PoseStamped& global_pose) const
   catch (tf2::ExtrapolationException& ex)
   {
     ROS_ERROR_THROTTLE(1.0, "Extrapolation Error looking up robot pose: %s\n", ex.what());
-    return false;
+    // Fallback: use latest transform to avoid total failure
+    ROS_WARN_THROTTLE(1.0, "Extrapolation error (TF data stale). Attempting fallback to latest transform...");
+    try
+    {
+      tf_.transform(robot_pose, global_pose, global_frame_);
+    }
+    catch (...)
+    {
+      return false;
+    }
   }
   // check global_pose timeout
   if (!global_pose.header.stamp.isZero() && current_time.toSec() - global_pose.header.stamp.toSec() > transform_tolerance_)

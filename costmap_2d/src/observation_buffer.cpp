@@ -62,6 +62,13 @@ ObservationBuffer::~ObservationBuffer()
 
 bool ObservationBuffer::setGlobalFrame(const std::string new_global_frame)
 {
+  // Choose a transform time to map existing observations into the
+  // `new_global_frame`. Using `ros::Time::now()` requests a transform
+  // for the current wall-clock time. If the TF buffer doesn't yet
+  // contain transforms up to `transform_time`, a lookup can fail with
+  // an extrapolation (future) error. In some cases it's preferable to
+  // use the timestamps of the observations themselves or `ros::Time(0)`
+  // (latest available) to avoid future-extrapolation.
   ros::Time transform_time = ros::Time::now();
   std::string tf_error;
 
@@ -119,12 +126,27 @@ void ObservationBuffer::bufferCloud(const sensor_msgs::PointCloud2& cloud)
   {
     // given these observations come from sensors... we'll need to store the origin pt of the sensor
     geometry_msgs::PointStamped local_origin;
+    // Use the cloud's header stamp, but with fallback to latest if timestamp is too far ahead.
+    // If cloud.header.stamp is ahead of the TF buffer's latest, use ros::Time(0) to avoid
+    // extrapolation errors due to stale TF data or clock skew.
     local_origin.header.stamp = cloud.header.stamp;
     local_origin.header.frame_id = origin_frame;
     local_origin.point.x = 0;
     local_origin.point.y = 0;
     local_origin.point.z = 0;
-    tf2_buffer_.transform(local_origin, global_origin, global_frame_);
+    
+    try
+    {
+      tf2_buffer_.transform(local_origin, global_origin, global_frame_);
+    }
+    catch (tf2::ExtrapolationException& ex)
+    {
+      // If we get extrapolation error, retry with ros::Time(0) (latest available)
+      ROS_DEBUG("Transform extrapolation error for local_origin, retrying with latest (ros::Time(0))");
+      local_origin.header.stamp = ros::Time(0);
+      tf2_buffer_.transform(local_origin, global_origin, global_frame_);
+    }
+    
     tf2::convert(global_origin.point, observation_list_.front().origin_);
 
     // make sure to pass on the raytrace/obstacle range of the observation buffer to the observations
@@ -133,8 +155,20 @@ void ObservationBuffer::bufferCloud(const sensor_msgs::PointCloud2& cloud)
 
     sensor_msgs::PointCloud2 global_frame_cloud;
 
-    // transform the point cloud
-    tf2_buffer_.transform(cloud, global_frame_cloud, global_frame_);
+    // Transform the point cloud with fallback to latest if extrapolation occurs
+    try
+    {
+      tf2_buffer_.transform(cloud, global_frame_cloud, global_frame_);
+    }
+    catch (tf2::ExtrapolationException& ex)
+    {
+      // Fallback: transform with ros::Time(0) to use latest available transform
+      ROS_DEBUG("PointCloud transform extrapolation error, retrying with latest (ros::Time(0))");
+      sensor_msgs::PointCloud2 cloud_latest = cloud;
+      cloud_latest.header.stamp = ros::Time(0);
+      tf2_buffer_.transform(cloud_latest, global_frame_cloud, global_frame_);
+    }
+    
     global_frame_cloud.header.stamp = cloud.header.stamp;
 
     // now we need to remove observations from the cloud that are below or above our height thresholds
