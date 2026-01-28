@@ -566,6 +566,10 @@ bool Costmap2DROS::getRobotPose(geometry_msgs::PoseStamped& global_pose) const
   ros::Time current_time = ros::Time::now();  // save time for checking tf delay later
 
   // get the global pose of the robot
+  // Track whether we used latest transform (ros::Time(0)) vs specific time
+  // This helps us decide whether to skip timeout check (if using latest, accept whatever we get)
+  bool used_latest_transform = false;
+  
   try
   {
     // Try to use current time if possible (makes sure it's not in the future)
@@ -577,18 +581,25 @@ bool Costmap2DROS::getRobotPose(geometry_msgs::PoseStamped& global_pose) const
       // Current time is too far in future, use latest available
       ROS_DEBUG("Transform not available at current time (%.3f), using latest (ros::Time(0))", current_time.toSec());
       lookup_time = ros::Time(0);
+      used_latest_transform = true;  // Mark that we're using latest available transform
     }
     
     if (tf_.canTransform(global_frame_, robot_base_frame_, lookup_time))
     {
       geometry_msgs::TransformStamped transform = tf_.lookupTransform(global_frame_, robot_base_frame_, lookup_time);
       tf2::doTransform(robot_pose, global_pose, transform);
+      // If we used ros::Time(0), mark that we used latest transform
+      if (lookup_time == ros::Time(0))
+      {
+        used_latest_transform = true;
+      }
     }
     else
     {
       // Last resort: use tf_.transform which always uses latest
       ROS_DEBUG("Fallback to tf_.transform (latest available)");
       tf_.transform(robot_pose, global_pose, global_frame_);
+      used_latest_transform = true;  // Fallback always uses latest
     }
   }
   catch (tf2::LookupException& ex)
@@ -616,12 +627,66 @@ bool Costmap2DROS::getRobotPose(geometry_msgs::PoseStamped& global_pose) const
     }
   }
   // check global_pose timeout
-  if (!global_pose.header.stamp.isZero() && current_time.toSec() - global_pose.header.stamp.toSec() > transform_tolerance_)
+  // FIX: Skip timeout check when using latest transform (ros::Time(0))
+  // Rationale: If we requested latest available transform, we should accept whatever we get,
+  // even if it's old, because it's the best available data. This is especially important
+  // when dealing with time sync issues or stale TF data.
+  
+  if (!global_pose.header.stamp.isZero())
   {
-    ROS_WARN_THROTTLE(1.0,
-                      "Costmap2DROS transform timeout. Current time: %.4f, global_pose stamp: %.4f, tolerance: %.4f",
-                      current_time.toSec(), global_pose.header.stamp.toSec(), transform_tolerance_);
-    return false;
+    double transform_age = current_time.toSec() - global_pose.header.stamp.toSec();
+    
+    // Log when we're using stale transforms (for debugging)
+    if (transform_age > 1.0)  // Log if transform is more than 1 second old
+    {
+      ROS_DEBUG_THROTTLE(5.0, 
+                         "Using transform with age %.2f seconds (stamp: %.4f, current: %.4f). "
+                         "Used latest transform: %s",
+                         transform_age, 
+                         global_pose.header.stamp.toSec(), 
+                         current_time.toSec(),
+                         used_latest_transform ? "yes" : "no");
+    }
+    
+    // ORIGINAL CODE (currently active):
+    // Check timeout regardless of whether we used latest transform
+    if (transform_age > transform_tolerance_)
+    {
+      ROS_WARN_THROTTLE(1.0,
+                        "Costmap2DROS transform timeout. Current time: %.4f, global_pose stamp: %.4f, tolerance: %.4f",
+                        current_time.toSec(), global_pose.header.stamp.toSec(), transform_tolerance_);
+      return false;
+    }
+    
+    // FIX: Skip timeout check when using latest transform (COMMENTED OUT - uncomment to enable)
+    // Uncomment the block below and comment out the block above to enable this fix:
+    /*
+    if (transform_age > transform_tolerance_)
+    {
+      if (used_latest_transform)
+      {
+        // We used latest available transform, so accept it even if old
+        // This prevents failures when TF data is stale but still the best available
+        ROS_WARN_THROTTLE(5.0,
+                          "Costmap2DROS: Using stale transform (age: %.2fs) because it's the latest available. "
+                          "Current time: %.4f, transform stamp: %.4f, tolerance: %.4f. "
+                          "This may indicate time sync issues or slow TF publishing.",
+                          transform_age,
+                          current_time.toSec(), 
+                          global_pose.header.stamp.toSec(), 
+                          transform_tolerance_);
+        // Continue - don't return false, accept the stale transform
+      }
+      else
+      {
+        // We requested a specific time, so timeout is a real problem
+        ROS_WARN_THROTTLE(1.0,
+                          "Costmap2DROS transform timeout. Current time: %.4f, global_pose stamp: %.4f, tolerance: %.4f",
+                          current_time.toSec(), global_pose.header.stamp.toSec(), transform_tolerance_);
+        return false;
+      }
+    }
+    */
   }
 
   return true;
