@@ -225,8 +225,17 @@ namespace dwa_local_planner {
     //if we cannot move... tell someone
     std::vector<geometry_msgs::PoseStamped> local_plan;
     if(path.cost_ < 0) {
-      ROS_DEBUG_NAMED("dwa_local_planner",
+      ROS_WARN_NAMED("dwa_local_planner",
           "The dwa local planner failed to find a valid plan, cost functions discarded all candidates. This can mean there is an obstacle too close to the robot.");
+      ROS_WARN("Robot pose: frame=%s, x=%.2f, y=%.2f, theta=%.2f", 
+               global_pose.header.frame_id.c_str(),
+               global_pose.pose.position.x,
+               global_pose.pose.position.y,
+               tf2::getYaw(global_pose.pose.orientation));
+      ROS_WARN("Robot velocity: vx=%.2f, vy=%.2f, vtheta=%.2f",
+               robot_vel.pose.position.x,
+               robot_vel.pose.position.y,
+               tf2::getYaw(robot_vel.pose.orientation));
       local_plan.clear();
       publishLocalPlan(local_plan);
       return false;
@@ -270,15 +279,33 @@ namespace dwa_local_planner {
     std::vector<geometry_msgs::PoseStamped> transformed_plan;
     if ( ! planner_util_.getLocalPlan(current_pose_, transformed_plan)) {
       ROS_ERROR("Could not get local plan");
+      ROS_ERROR("Current pose: frame=%s, x=%.2f, y=%.2f", 
+                current_pose_.header.frame_id.c_str(),
+                current_pose_.pose.position.x,
+                current_pose_.pose.position.y);
       return false;
     }
 
     //if the global plan passed in is empty... we won't do anything
     if(transformed_plan.empty()) {
       ROS_WARN_NAMED("dwa_local_planner", "Received an empty transformed plan.");
+      ROS_WARN("Current pose frame: %s, position: (%.2f, %.2f)", 
+               current_pose_.header.frame_id.c_str(),
+               current_pose_.pose.position.x,
+               current_pose_.pose.position.y);
       return false;
     }
-    ROS_DEBUG_NAMED("dwa_local_planner", "Received a transformed plan with %zu points.", transformed_plan.size());
+    ROS_INFO_NAMED("dwa_local_planner", "Received a transformed plan with %zu points.", transformed_plan.size());
+    if (transformed_plan.size() > 0) {
+      ROS_INFO("First plan point: frame=%s, x=%.2f, y=%.2f", 
+               transformed_plan[0].header.frame_id.c_str(),
+               transformed_plan[0].pose.position.x,
+               transformed_plan[0].pose.position.y);
+      ROS_INFO("Last plan point: frame=%s, x=%.2f, y=%.2f", 
+               transformed_plan.back().header.frame_id.c_str(),
+               transformed_plan.back().pose.position.x,
+               transformed_plan.back().pose.position.y);
+    }
 
     // update plan in dwa_planner even if we just stop and rotate, to allow checkTrajectory
     dp_->updatePlanAndLocalCosts(current_pose_, transformed_plan, costmap_ros_->getRobotFootprint());
