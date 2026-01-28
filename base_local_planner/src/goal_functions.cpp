@@ -109,34 +109,18 @@ namespace base_local_planner {
 
     const geometry_msgs::PoseStamped& plan_pose = global_plan[0];
     try {
-      // get plan_to_global_transform from plan frame to global_frame
-      // 
-      // PROBLEM: The current code uses ros::Time() for target_time but plan_pose.header.stamp 
-      // (which could be seconds old) for source_time. This causes extrapolation errors when:
-      // - The plan has old timestamps (from when it was created)
-      // - The TF buffer doesn't have transforms for that old time
-      // - System clock has jumped or there are time sync issues
-      //
-      // FIX: Use ros::Time(0) for both source and target times to always use the latest 
-      // available transforms. This ignores the plan's timestamps and uses current transform state.
-      // 
-      // Why ros::Time(0) instead of ros::Time::now()?
-      // - ros::Time(0) means "latest available" - more tolerant of delays
-      // - ros::Time::now() requires exact current time, can fail if there's any processing delay
-      // - ros::Time(0) avoids extrapolation errors when data is slightly stale
-      //
-      // SUGGESTED FIX (uncomment to apply):
+      // FIX: Use simple lookupTransform with ros::Time(0) to get latest available transform
+      // This avoids extrapolation errors when plan timestamps are old
       geometry_msgs::TransformStamped plan_to_global_transform = tf.lookupTransform(
-          global_frame, ros::Time(0),  // Use latest available transform
-          plan_pose.header.frame_id, ros::Time(0),  // Use latest available transform (ignore plan timestamp)
-          plan_pose.header.frame_id, ros::Duration(0.5));
-      //
-      // geometry_msgs::TransformStamped plan_to_global_transform = tf.lookupTransform(global_frame, ros::Time(),
-      //     plan_pose.header.frame_id, plan_pose.header.stamp, plan_pose.header.frame_id, ros::Duration(0.5));
+          global_frame, plan_pose.header.frame_id, ros::Time(0));
 
       //let's get the pose of the robot in the frame of the plan
+      // FIX: Use lookupTransform with ros::Time(0) to avoid extrapolation errors
+      // The tf.transform() method uses global_pose.header.stamp which can be slightly in the future
       geometry_msgs::PoseStamped robot_pose;
-      tf.transform(global_pose, robot_pose, plan_pose.header.frame_id);
+      geometry_msgs::PoseStamped global_pose_latest = global_pose;
+      global_pose_latest.header.stamp = ros::Time(0);  // Use latest available transform
+      tf.transform(global_pose_latest, robot_pose, plan_pose.header.frame_id);
 
       //we'll discard points on the plan that are outside the local costmap
       double dist_threshold = std::max(costmap.getSizeInCellsX() * costmap.getResolution() / 2.0,
@@ -207,13 +191,7 @@ namespace base_local_planner {
       // 
       // SUGGESTED FIX (uncomment to apply):
       geometry_msgs::TransformStamped transform = tf.lookupTransform(
-          global_frame, ros::Time(0),  // Use latest available transform
-          plan_goal_pose.header.frame_id, ros::Time(0),  // Use latest available transform (ignore plan timestamp)
-          plan_goal_pose.header.frame_id, ros::Duration(0.5));
-      //
-      // geometry_msgs::TransformStamped transform = tf.lookupTransform(global_frame, ros::Time(),
-      //                    plan_goal_pose.header.frame_id, plan_goal_pose.header.stamp,
-      //                    plan_goal_pose.header.frame_id, ros::Duration(0.5));
+          global_frame, plan_goal_pose.header.frame_id, ros::Time(0));
 
       tf2::doTransform(plan_goal_pose, goal_pose, transform);
     }
