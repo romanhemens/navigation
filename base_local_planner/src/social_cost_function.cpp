@@ -35,10 +35,10 @@ double SocialCostFunction::scoreTrajectory(Trajectory &traj) {
         double px, py, pth, desired_theta, desired_speed;
         //////////////////////////////// lateral
         // preference on the left
-        if (head_dir_ == 1) 
+        if (head_dir_ == 0) 
             desired_theta = 0.2;
         // preference on the straight
-        else if (head_dir_ == 0) 
+        else if (head_dir_ == 1) 
             desired_theta = 0;
         // preference on the right
         else if (head_dir_ == 2) 
