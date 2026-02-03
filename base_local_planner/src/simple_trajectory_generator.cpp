@@ -38,6 +38,7 @@
 #include <base_local_planner/simple_trajectory_generator.h>
 
 #include <cmath>
+#include <ros/ros.h>
 
 #include <base_local_planner/velocity_iterator.h>
 
@@ -192,10 +193,16 @@ bool SimpleTrajectoryGenerator::generateTrajectory(
   // the required minimum velocities for translation and rotation (if set)
   if ((limits_->min_vel_trans >= 0 && vmag + eps < limits_->min_vel_trans) &&
       (limits_->min_vel_theta >= 0 && fabs(sample_target_vel[2]) + eps < limits_->min_vel_theta)) {
+        ROS_WARN_NAMED("trajectory_generator", 
+                    "REJECTED: Trajectory below min velocities - vmag=%.4f (min_trans=%.4f), vtheta=%.4f (min_theta=%.4f)",
+                    vmag, limits_->min_vel_trans, fabs(sample_target_vel[2]), limits_->min_vel_theta);
     return false;
   }
   // make sure we do not exceed max diagonal (x+y) translational velocity (if set)
   if (limits_->max_vel_trans >=0 && vmag - eps > limits_->max_vel_trans) {
+    ROS_WARN_NAMED("trajectory_generator",
+                    "REJECTED: Trajectory exceeds max_vel_trans - vmag=%.4f > max_vel_trans=%.4f",
+                    vmag, limits_->max_vel_trans);
     return false;
   }
 
@@ -212,6 +219,9 @@ bool SimpleTrajectoryGenerator::generateTrajectory(
   }
 
   if (num_steps == 0) {
+    ROS_WARN_NAMED("trajectory_generator",
+                    "REJECTED: num_steps == 0 - vmag=%.4f, vtheta=%.4f, sim_time=%.2f, sim_granularity=%.4f",
+                    vmag, fabs(sample_target_vel[2]), sim_time_, sim_granularity_);
     return false;
   }
 
@@ -234,6 +244,11 @@ bool SimpleTrajectoryGenerator::generateTrajectory(
     traj.thetav_ = sample_target_vel[2];
   }
 
+  // DEBUG: Log erfolgreich generierte Trajektorie
+  ROS_WARN_NAMED("trajectory_generator",
+                  "GENERATED: vx=%.4f, vy=%.4f, vtheta=%.4f, vmag=%.4f, num_steps=%d, dt=%.4f, sim_time=%.2f",
+                  sample_target_vel[0], sample_target_vel[1], sample_target_vel[2], vmag, num_steps, dt, sim_time_);
+
   //simulate the trajectory and check for collisions, updating costs along the way
   for (int i = 0; i < num_steps; ++i) {
 
@@ -250,6 +265,11 @@ bool SimpleTrajectoryGenerator::generateTrajectory(
     pos = computeNewPositions(pos, loop_vel, dt);
 
   } // end for simulation steps
+
+  // DEBUG: Log finales Trajektorien-Ergebnis
+  ROS_WARN_NAMED("trajectory_generator",
+                  "COMPLETED: Trajectory with %u points, final pos=(%.2f, %.2f, %.2f), final vel=(%.4f, %.4f, %.4f)",
+                  traj.getPointsSize(), pos[0], pos[1], pos[2], loop_vel[0], loop_vel[1], loop_vel[2]);
 
   return true; // trajectory has at least one point
 }
