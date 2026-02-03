@@ -37,6 +37,7 @@
 #include <dwa_local_planner/dwa_planner.h>
 #include <base_local_planner/goal_functions.h>
 #include <cmath>
+#include <algorithm>  // for std::sort
 
 //for computing path distance
 #include <queue>
@@ -332,6 +333,64 @@ namespace dwa_local_planner {
     // find best trajectory by sampling and scoring the samples
     std::vector<base_local_planner::Trajectory> all_explored;
     scored_sampling_planner_.findBestTrajectory(result_traj_, &all_explored);
+    
+    // DEBUG: Detaillierte Analyse wenn keine gültige Trajektorie gefunden wurde
+    ROS_WARN_NAMED("dwa_local_planner", "DWA findBestPath: result_traj_.cost_ = %.2f, all_explored.size() = %zu", result_traj_.cost_, all_explored.size());
+    
+    if (result_traj_.cost_ < 0) {
+      ROS_WARN_NAMED("dwa_local_planner", "=== DWA DEBUG: Keine gültige Trajektorie gefunden ===");
+      ROS_WARN_NAMED("dwa_local_planner", "Best trajectory cost: %.2f", result_traj_.cost_);
+      ROS_WARN_NAMED("dwa_local_planner", "Anzahl generierter Trajektorien: %zu", all_explored.size());
+      
+      if (all_explored.size() == 0) {
+        ROS_WARN_NAMED("dwa_local_planner", "WARNUNG: Keine Trajektorien wurden generiert! Prüfe vx_samples, vtheta_samples, min_vel_trans, min_vel_theta");
+        ROS_WARN_NAMED("dwa_local_planner", "=== Ende DWA DEBUG ===");
+      } else {
+        // Analysiere Cost-Werte der Trajektorien
+        int rejected_by_oscillation = 0;
+        int rejected_by_obstacle = 0;
+        int rejected_by_other = 0;
+        double best_cost = -999999.0;
+        double worst_cost = 999999.0;
+        
+        for(std::vector<base_local_planner::Trajectory>::iterator t = all_explored.begin(); t != all_explored.end(); ++t) {
+          if (t->cost_ < best_cost) best_cost = t->cost_;
+          if (t->cost_ < worst_cost) worst_cost = t->cost_;
+          
+          // Cost-Codes: -1 = oscillation, -2 = obstacle, andere negative = andere Gründe
+          if (t->cost_ == -1.0) rejected_by_oscillation++;
+          else if (t->cost_ == -2.0) rejected_by_obstacle++;
+          else if (t->cost_ < 0) rejected_by_other++;
+        }
+        
+          ROS_WARN_NAMED("dwa_local_planner", "Bester Cost-Wert (negativ = abgelehnt): %.2f", best_cost);
+          ROS_WARN_NAMED("dwa_local_planner", "Schlechtester Cost-Wert: %.2f", worst_cost);
+          ROS_WARN_NAMED("dwa_local_planner", "Abgelehnt durch Oszillation (cost=-1): %d", rejected_by_oscillation);
+          ROS_WARN_NAMED("dwa_local_planner", "Abgelehnt durch Hindernisse (cost=-2): %d", rejected_by_obstacle);
+          ROS_WARN_NAMED("dwa_local_planner", "Abgelehnt durch andere Cost-Funktionen: %d", rejected_by_other);
+          
+          // Zeige die besten 5 Trajektorien (auch wenn abgelehnt)
+          ROS_WARN_NAMED("dwa_local_planner", "--- Top 5 Trajektorien (nach Cost-Wert) ---");
+        std::vector<base_local_planner::Trajectory> sorted_trajs = all_explored;
+        std::sort(sorted_trajs.begin(), sorted_trajs.end(), 
+                  [](const base_local_planner::Trajectory& a, const base_local_planner::Trajectory& b) {
+                    return a.cost_ > b.cost_; // Sortiere absteigend (beste zuerst)
+                  });
+        
+        for (size_t i = 0; i < std::min((size_t)5, sorted_trajs.size()); ++i) {
+          const base_local_planner::Trajectory& t = sorted_trajs[i];
+          if (t.getPointsSize() > 0) {
+            double p_x, p_y, p_th;
+            t.getPoint(0, p_x, p_y, p_th);
+            double end_x, end_y, end_th;
+            t.getPoint(t.getPointsSize()-1, end_x, end_y, end_th);
+            ROS_WARN_NAMED("dwa_local_planner", "  Traj %zu: cost=%.2f, vx=%.3f, vy=%.3f, vtheta=%.3f, Start=(%.2f,%.2f), End=(%.2f,%.2f), Points=%u",
+                    i+1, t.cost_, t.xv_, t.yv_, t.thetav_, p_x, p_y, end_x, end_y, t.getPointsSize());
+          }
+        }
+        ROS_WARN_NAMED("dwa_local_planner", "=== Ende DWA DEBUG ===");
+      }
+    }
 
     if(publish_traj_pc_)
     {
@@ -346,21 +405,19 @@ namespace dwa_local_planner {
                                           "theta", 1, sensor_msgs::PointField::FLOAT32,
                                           "cost", 1, sensor_msgs::PointField::FLOAT32);
 
+        // Zähle ALLE Trajektorien (auch abgelehnte) für Debugging
         unsigned int num_points = 0;
         for(std::vector<base_local_planner::Trajectory>::iterator t=all_explored.begin(); t != all_explored.end(); ++t)
         {
-            if (t->cost_<0)
-              continue;
             num_points += t->getPointsSize();
         }
 
         cloud_mod.resize(num_points);
         sensor_msgs::PointCloud2Iterator<float> iter_x(traj_cloud, "x");
+        // Veröffentliche ALLE Trajektorien (auch abgelehnte) - cost < 0 zeigt abgelehnte an
         for(std::vector<base_local_planner::Trajectory>::iterator t=all_explored.begin(); t != all_explored.end(); ++t)
         {
-            if(t->cost_<0)
-                continue;
-            // Fill out the plan
+            // Fill out the plan - auch für abgelehnte Trajektorien (cost < 0)
             for(unsigned int i = 0; i < t->getPointsSize(); ++i) {
                 double p_x, p_y, p_th;
                 t->getPoint(i, p_x, p_y, p_th);
@@ -368,7 +425,7 @@ namespace dwa_local_planner {
                 iter_x[1] = p_y;
                 iter_x[2] = 0.0;
                 iter_x[3] = p_th;
-                iter_x[4] = t->cost_;
+                iter_x[4] = t->cost_;  // cost < 0 = abgelehnt, cost >= 0 = gültig
                 ++iter_x;
             }
         }
