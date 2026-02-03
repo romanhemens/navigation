@@ -236,6 +236,8 @@ namespace dwa_local_planner {
                robot_vel.pose.position.x,
                robot_vel.pose.position.y,
                tf2::getYaw(robot_vel.pose.orientation));
+      ROS_WARN("Best trajectory cost: %.2f (negativ = abgelehnt)", path.cost_);
+      ROS_WARN("Pruefe die detaillierten DWA DEBUG Logs oben fuer mehr Informationen.");
       local_plan.clear();
       publishLocalPlan(local_plan);
       return false;
