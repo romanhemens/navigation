@@ -165,7 +165,7 @@ namespace dwa_local_planner {
     private_nh.param("global_frame_id", frame_id_, std::string("odom"));
 
     traj_cloud_pub_ = private_nh.advertise<sensor_msgs::PointCloud2>("trajectory_cloud", 1);
-    social_sub_ = private_nh.subscribe("/groqai_result", 1, &DWAPlanner::socialCallback, this); // /groqai_result openai_result
+    social_sub_ = private_nh.subscribe("/gemini_result", 1, &DWAPlanner::socialCallback, this); // /groqai_result openai_result
     private_nh.param("publish_traj_pc", publish_traj_pc_, false);
 
     // set up all the cost functions that will be applied in order
