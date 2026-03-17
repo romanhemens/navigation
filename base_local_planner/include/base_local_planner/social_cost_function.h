@@ -60,8 +60,14 @@ public:
   bool prepare() {return true;};
 
 private:
-  int head_dir_ = -1; // LEFT 0, STRAIGHT 1, RIGHT 2
-  int speed_ = -1;    // SPEED DOWN 0, SPEED UP 1, MAINTAIN 2, STOP 3
+  // Values published on /gemini_result (vlm_social_nav/SocialNavMsg).
+  // New API (fine-grained):
+  //   head_dir: 0..6  (hard_left, left, slight_left, straight, slight_right, right, hard_right)
+  //   speed:    0..5  (stop, slow, maintain, cruise, speed_up, fast_sprint)
+  //
+  // -1 means "no social constraint".
+  int head_dir_ = -1;
+  int speed_ = -1;
 };
 
 } /* namespace base_local_planner */
